@@ -1,8 +1,10 @@
 import os
 import streamlit as st
 from google import genai
-from google.genai import types
 from PIL import Image
+import plotly.express as px
+import folium
+from streamlit_folium import st_folium
 
 # 1. Page Configuration
 st.set_page_config(
@@ -11,37 +13,46 @@ st.set_page_config(
     layout="centered"
 )
 
-# 2. Custom CSS for Modern UI & Buttons
+# 2. Custom CSS for Attractive UI & Modern Buttons
 st.markdown("""
     <style>
     .main {
-        background-color: #f8f9fa;
+        background-color: #f4f9f4;
     }
     .stButton>button {
-        background: linear-gradient(135deg, #28a745, #218838);
+        background: linear-gradient(135deg, #28a745, #20c997);
         color: white;
-        border-radius: 10px;
-        padding: 0.6rem 1.2rem;
+        border-radius: 12px;
+        padding: 0.6rem 1.4rem;
         font-weight: bold;
         border: none;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        box-shadow: 0 4px 10px rgba(40, 167, 69, 0.3);
         transition: 0.3s;
     }
     .stButton>button:hover {
-        background: linear-gradient(135deg, #218838, #1e7e34);
-        box-shadow: 0 6px 8px rgba(0,0,0,0.15);
+        background: linear-gradient(135deg, #218838, #17a2b8);
+        box-shadow: 0 6px 14px rgba(40, 167, 69, 0.4);
+        transform: translateY(-2px);
     }
     .card {
-        padding: 20px;
-        border-radius: 12px;
+        padding: 22px;
+        border-radius: 16px;
         background: white;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.06);
         margin-bottom: 20px;
+        border-left: 5px solid #28a745;
+    }
+    .metric-card {
+        background: white;
+        padding: 15px;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        text-align: center;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# 3. Session State Initialization for Login & History
+# 3. Session State Initialization
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "username" not in st.session_state:
@@ -49,18 +60,18 @@ if "username" not in st.session_state:
 if "history" not in st.session_state:
     st.session_state.history = []
 
-# 4. Authentication / Login Page
+# 4. Login Page
 if not st.session_state.logged_in:
     st.markdown("<h1 style='text-align: center; color: #28a745;'>♻️ WasteWise AI Portal</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: gray;'>Smart AI-Powered Waste Classification & Management</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: gray;'>Smart AI-Powered Waste Classification, Analytics & Recycling Hub</p>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.form("login_form"):
-            st.subheader("Login to your account")
+            st.subheader("🔐 Secure Login")
             user_input = st.text_input("Username")
             pass_input = st.text_input("Password", type="password")
-            submit_btn = st.form_submit_button("Login")
+            submit_btn = st.form_submit_button("Login to Dashboard")
             
             if submit_btn:
                 if user_input and pass_input:
@@ -71,9 +82,12 @@ if not st.session_state.logged_in:
                     st.error("Please enter both username and password.")
     st.stop()
 
-# 5. Main App Dashboard (After Login)
+# 5. Sidebar Navigation
 st.sidebar.title(f"Welcome, {st.session_state.username}! 👋")
-menu = st.sidebar.radio("Navigation", ["AI Waste Scanner", "Scan History", "Logout"])
+menu = st.sidebar.radio(
+    "Navigation Hub", 
+    ["AI Waste Scanner", "Scan History", "Analytics & Stats", "Recycling Centers Map", "Logout"]
+)
 
 if menu == "Logout":
     st.session_state.logged_in = False
@@ -82,22 +96,20 @@ if menu == "Logout":
 
 # --- Feature 1: AI Waste Scanner ---
 if menu == "AI Waste Scanner":
-    st.title("♻️ WasteWise AI Scanner")
-    st.write("Take a picture or upload an image of waste to instantly classify it and get recycling recommendations.")
+    st.title("♻️ AI Waste Classification Scanner")
+    st.write("Capture a live photo or upload an image of waste to instantly analyze its type, recyclability, and disposal method.")
 
-    # API Client Setup
     try:
         api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
         client = genai.Client(api_key=api_key) if api_key else None
     except Exception as e:
         client = None
 
-    # Camera / Upload Options
     input_method = st.radio("Choose input method:", ["Live Camera Capture", "Upload Image File"], horizontal=True)
 
     image = None
     if input_method == "Live Camera Capture":
-        cam_file = st.camera_input("Capture Waste Image")
+        cam_file = st.camera_input("Capture Waste Image (Optimized for Mobile & iPhone)")
         if cam_file:
             image = Image.open(cam_file)
     else:
@@ -106,13 +118,13 @@ if menu == "AI Waste Scanner":
             image = Image.open(up_file)
 
     if image:
-        st.image(image, caption="Selected Image", use_container_width=True)
+        st.image(image, caption="Selected Waste Image", use_container_width=True)
         
-        if st.button("🚀 Analyze Waste"):
+        if st.button("🚀 Analyze Waste Properties"):
             if not client:
                 st.error("Gemini API Key is missing! Please configure it in Streamlit Secrets.")
             else:
-                with st.spinner("Analyzing waste properties via AI..."):
+                with st.spinner("Analyzing waste properties via Gemini AI..."):
                     try:
                         prompt = (
                             "Analyze this image of waste. Provide: "
@@ -120,19 +132,29 @@ if menu == "AI Waste Scanner":
                             "2. Recyclability status (Recyclable / Non-recyclable / Hazardous). "
                             "3. Proper disposal or recycling instructions in a clear, concise format."
                         )
-                        # Updated to use gemini-3.6-flash model
                         response = client.models.generate_content(
                             model='gemini-3.6-flash',
                             contents=[image, prompt]
                         )
                         result_text = response.text
                         
-                        # Show result
                         st.success("Analysis Complete!")
-                        st.markdown(f"<div class='card'><h3>📊 AI Report</h3>{result_text}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='card'><h3>📊 AI Environmental Report</h3>{result_text}</div>", unsafe_allow_html=True)
                         
-                        # Save to history
-                        st.session_state.history.append({"image": image, "report": result_text})
+                        # Guess category for stats
+                        category = "Plastic"
+                        txt_lower = result_text.lower()
+                        if "organic" in txt_lower: category = "Organic"
+                        elif "electronic" in txt_lower or "e-waste" in txt_lower: category = "Electronic"
+                        elif "paper" in txt_lower: category = "Paper"
+                        elif "metal" in txt_lower: category = "Metal"
+                        elif "glass" in txt_lower: category = "Glass"
+                        
+                        st.session_state.history.append({
+                            "image": image, 
+                            "report": result_text, 
+                            "category": category
+                        })
                         
                     except Exception as e:
                         st.error(f"An error occurred during analysis: {e}")
@@ -141,10 +163,64 @@ if menu == "AI Waste Scanner":
 elif menu == "Scan History":
     st.title("📜 Past Scan History")
     if not st.session_state.history:
-        st.info("No scan history available yet. Scan some waste items to see them here!")
+        st.info("No scan history available yet. Start scanning items to build your history log!")
     else:
         for i, item in enumerate(reversed(st.session_state.history)):
-            st.markdown(f"### Scan #{len(st.session_state.history) - i}")
-            st.image(item["image"], width=200)
+            st.markdown(f"### 🏷️ Scan Item #{len(st.session_state.history) - i} ({item.get('category', 'General')})")
+            st.image(item["image"], width=220)
             st.markdown(f"<div class='card'>{item['report']}</div>", unsafe_allow_html=True)
             st.divider()
+
+# --- Feature 3: Analytics & Stats ---
+elif menu == "Analytics & Stats":
+    st.title("📈 Waste Management Analytics")
+    st.write("Visualizing your scanning trends and categorized waste distribution.")
+    
+    if not st.session_state.history:
+        st.info("Perform some waste scans to view analytics and charts here!")
+    else:
+        categories = [item.get("category", "Plastic") for item in st.session_state.history]
+        cat_counts = {cat: categories.count(cat) for cat in set(categories)}
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(f"<div class='metric-card'><h3>Total Scans</h3><h2>{len(st.session_state.history)}</h2></div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"<div class='metric-card'><h3>Categories Found</h3><h2>{len(cat_counts)}</h2></div>", unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Plotly Donut Chart
+        fig = px.pie(
+            names=list(cat_counts.keys()), 
+            values=list(cat_counts.values()), 
+            title="Waste Breakdown by Category",
+            hole=0.4,
+            color_discrete_sequence=px.colors.sequential.Greens
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+# --- Feature 4: Recycling Centers Map ---
+elif menu == "Recycling Centers Map":
+    st.title("🗺️ Local Recycling & Disposal Centers")
+    st.write("Find nearby certified green recycling facilities and disposal drop-off points.")
+    
+    # Create Folium Map
+    m = folium.Map(location=[33.6844, 73.0479], zoom_start=12) # Default coordinates (Islamabad/Region center)
+    
+    # Add dummy/sample recycling center markers
+    centers = [
+        {"name": "Green Eco Recycling Hub", "location": [33.7100, 73.0500], "type": "Plastic & Paper"},
+        {"name": "City Clean Organic Compost Plant", "location": [33.6600, 73.0200], "type": "Organic Waste"},
+        {"name": "E-Waste Safe Disposal Unit", "location": [33.6900, 73.0800], "type": "Electronics & Batteries"}
+    ]
+    
+    for center in centers:
+        folium.Marker(
+            location=center["location"],
+            popup=f"<b>{center['name']}</b><br>Accepts: {center['type']}",
+            tooltip=center["name"],
+            icon=folium.Icon(color="green", icon="recycle", prefix="fa")
+        ).add_to(m)
+        
+    st_folium(m, width=700, height=450)
