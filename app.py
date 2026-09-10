@@ -120,8 +120,9 @@ if menu == "AI Waste Scanner":
                             "2. Recyclability status (Recyclable / Non-recyclable / Hazardous). "
                             "3. Proper disposal or recycling instructions in a clear, concise format."
                         )
+                        # Updated to use gemini-3.6-flash model
                         response = client.models.generate_content(
-                            model='gemini-2.5-flash',
+                            model='gemini-3.6-flash',
                             contents=[image, prompt]
                         )
                         result_text = response.text
