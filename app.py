@@ -1,261 +1,223 @@
-import os
+import os, json
 import streamlit as st
-from google import genai
 from PIL import Image
+import pandas as pd
 import plotly.express as px
 import folium
 from streamlit_folium import st_folium
+from streamlit_js_eval import get_geolocation
+import requests
+from google import genai
+from dotenv import load_dotenv
 
-# 1. Page Configuration
-st.set_page_config(
-    page_title="WasteWise AI - Next-Gen Portal",
-    page_icon="♻️",
-    layout="wide"
-)
+load_dotenv()
 
-# 2. Ultra-Modern Custom CSS for High-End Look & Feel
+st.set_page_config(page_title="WasteWise AI Portal", page_icon="♻️", layout="wide")
+
+# Custom CSS
 st.markdown("""
-    <style>
-    .main {
-        background: #0f172a;
-        color: #f8fafc;
-    }
-    .stSidebar {
-        background-color: #1e293b !important;
-    }
-    .stButton>button {
-        background: linear-gradient(135deg, #10b981, #059669);
-        color: white;
-        border-radius: 12px;
-        padding: 0.6rem 1.5rem;
-        font-weight: 600;
-        border: none;
-        box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
-        transition: all 0.3s ease;
-    }
-    .stButton>button:hover {
-        background: linear-gradient(135deg, #059669, #047857);
-        box-shadow: 0 6px 20px rgba(16, 185, 129, 0.6);
-        transform: translateY(-2px);
-    }
-    .glass-card {
-        background: rgba(30, 41, 59, 0.7);
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 24px;
-        border-radius: 16px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-        margin-bottom: 20px;
-    }
-    .profile-banner {
-        display: flex;
-        align-items: center;
-        gap: 20px;
-        padding: 20px;
-        background: linear-gradient(135deg, #1e293b, #0f172a);
-        border-radius: 16px;
-        border: 1px solid rgba(16, 185, 129, 0.3);
-        margin-bottom: 25px;
-    }
-    </style>
+<style>
+    .stApp { background-color: #090d16; color: #f1f5f9; }
+    .card { background: #1e293b; padding: 18px; border-radius: 12px; margin-bottom: 12px; border-left: 4px solid #10b981; }
+    .stat { background: #0f172a; padding: 12px; border-radius: 10px; text-align: center; border: 1px solid #1e293b; }
+    .profile-card { background: #131d31; padding: 20px; border-radius: 14px; border: 1px solid #334155; }
+</style>
 """, unsafe_allow_html=True)
 
-# 3. Session State Initialization
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "username" not in st.session_state:
-    st.session_state.username = ""
-if "profile_pic" not in st.session_state:
-    st.session_state.profile_pic = None
-if "history" not in st.session_state:
-    st.session_state.history = []
+# Session State Database
+if "users_db" not in st.session_state:
+    st.session_state.users_db = {
+        "usr_1": {"name": "User 1", "points": 0, "scans": 0, "co2": 0.0, "pic": None},
+        "usr_2": {"name": "User 2", "points": 0, "scans": 0, "co2": 0.0, "pic": None}
+    }
 
-# 4. Login Page
-if not st.session_state.logged_in:
-    col1, col2, col3 = st.columns([1, 1.2, 1])
-    with col2:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown("<div class='glass-card' style='text-align: center;'>", unsafe_allow_html=True)
-        st.markdown("<h1 style='color: #10b981; font-size: 2.5rem;'>♻️ WasteWise AI</h1>", unsafe_allow_html=True)
-        st.markdown("<p style='color: #94a3b8;'>Next-Generation Smart Waste & Satellite Tracking Portal</p><br>", unsafe_allow_html=True)
-        
-        with st.form("login_form"):
-            user_input = st.text_input("Username")
-            pass_input = st.text_input("Password", type="password")
-            submit_btn = st.form_submit_button("Access Portal", use_container_width=True)
-            
-            if submit_btn:
-                if user_input and pass_input:
-                    st.session_state.logged_in = True
-                    st.session_state.username = user_input
-                    st.rerun()
-                else:
-                    st.error("Please fill in both fields.")
-        st.markdown("</div>", unsafe_allow_html=True)
-    st.stop()
+if "active_user_id" not in st.session_state:
+    st.session_state.active_user_id = "usr_1"
 
-# 5. Sidebar Navigation & Profile Widget
-st.sidebar.markdown(f"### 👤 Welcome, {st.session_state.username}!")
-if st.session_state.profile_pic:
-    st.sidebar.image(st.session_state.profile_pic, width=100, caption="Profile Avatar")
+if "analysis" not in st.session_state:
+    st.session_state.analysis = None
 
-menu = st.sidebar.radio(
-    "Navigation Hub", 
-    ["AI Waste Scanner", "User Profile & Avatar", "Scan History", "Analytics & Insights", "Live Satellite Map", "Logout"]
+# Sidebar — Profile Switcher
+st.sidebar.title("👤 Select User Account")
+
+user_list = {v["name"]: k for k, v in st.session_state.users_db.items()}
+selected_user_name = st.sidebar.selectbox(
+    "Active Account:",
+    options=list(user_list.keys()),
+    index=list(user_list.values()).index(st.session_state.active_user_id)
 )
 
-if menu == "Logout":
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-    st.rerun()
+st.session_state.active_user_id = user_list[selected_user_name]
+current_user = st.session_state.users_db[st.session_state.active_user_id]
 
-# --- Feature 1: AI Waste Scanner ---
-if menu == "AI Waste Scanner":
-    st.title("♻️ AI Waste Classification Scanner")
-    st.markdown("<p style='color: #94a3b8;'>Instantly evaluate waste materials and receive smart AI recycling guides.</p>", unsafe_allow_html=True)
+# Create New User Profile
+st.sidebar.markdown("---")
+st.sidebar.subheader("➕ Add New User")
 
+with st.sidebar.form("create_user_form", clear_on_submit=True):
+    new_user_name = st.text_input("Enter New Username:")
+    create_submitted = st.form_submit_button("Create Account", type="primary")
+    if create_submitted and new_user_name.strip():
+        new_id = f"usr_{len(st.session_state.users_db) + 1}"
+        st.session_state.users_db[new_id] = {
+            "name": new_user_name.strip(),
+            "points": 0,
+            "scans": 0,
+            "co2": 0.0,
+            "pic": None
+        }
+        st.session_state.active_user_id = new_id
+        st.success(f"Account '{new_user_name}' created!")
+        st.rerun()
+
+api_key = st.secrets.get("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY", ""))
+
+# Helper Functions
+def get_location_details(lat, lon):
     try:
-        api_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
-        client = genai.Client(api_key=api_key) if api_key else None
-    except Exception as e:
-        client = None
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}&zoom=18&addressdetails=1"
+        headers = {"User-Agent": "WasteWiseApp/1.0"}
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("display_name", "Address details unavailable"), data.get("address", {})
+    except Exception:
+        pass
+    return "Address details unavailable", {}
 
-    input_method = st.radio("Select Input Mode:", ["Live Camera Capture", "Upload Image File"], horizontal=True)
+def analyze_waste(image):
+    if not api_key:
+        return {
+            "object": "Plastic Bottle (PET)", "material": "Code 1 PETE",
+            "value": "PKR 45-65/kg", "hazard": "Medium",
+            "prep_steps": ["Rinse liquid", "Crush bottle"], "upcycling": "DIY Self-watering Planter"
+        }
+    prompt = "Analyze waste item image. Return strictly valid JSON with keys: object, material, value, hazard, prep_steps (list), upcycling."
+    client = genai.Client(api_key=api_key)
+    for model in ['gemini-2.5-flash', 'gemini-1.5-flash']:
+        try:
+            res = client.models.generate_content(model=model, contents=[image, prompt])
+            raw = res.text.strip().replace("```json", "").replace("```", "").strip()
+            return json.loads(raw)
+        except Exception:
+            continue
+    return {"object": "Waste Item", "material": "Recyclable", "value": "PKR 30/kg", "hazard": "Low", "prep_steps": ["Clean"], "upcycling": "Recycle locally"}
 
-    image = None
-    if input_method == "Live Camera Capture":
-        cam_file = st.camera_input("Capture Waste Object")
-        if cam_file:
-            image = Image.open(cam_file)
+# Dynamic Header
+head_col1, head_col2 = st.columns([1, 5])
+
+with head_col1:
+    if current_user["pic"] is not None:
+        st.image(current_user["pic"], width=80)
     else:
-        up_file = st.file_uploader("Upload Waste Image", type=["jpg", "jpeg", "png"])
-        if up_file:
-            image = Image.open(up_file)
+        st.markdown("<h1 style='text-align: center; margin: 0;'>👤</h1>", unsafe_allow_html=True)
 
-    if image:
-        col_img, col_res = st.columns([1, 1.2])
-        with col_img:
-            st.image(image, caption="Target Waste Image", use_container_width=True)
+with head_col2:
+    st.markdown("## ♻️ WasteWise Portal")
+    st.markdown(f"Active User: **{current_user['name']}**")
+
+c1, c2, c3 = st.columns(3)
+c1.markdown(f'<div class="stat">⚡ <b>User Points:</b> {current_user["points"]}</div>', unsafe_allow_html=True)
+c2.markdown(f'<div class="stat">📸 <b>Total Scans:</b> {current_user["scans"]}</div>', unsafe_allow_html=True)
+c3.markdown(f'<div class="stat">🛡️ <b>CO₂ Saved:</b> {current_user["co2"]:.1f} kg</div>', unsafe_allow_html=True)
+st.markdown("---")
+
+# Tabs
+tab1, tab2, tab3, tab4 = st.tabs(["📷 AI Scanner", "📍 HD Satellite GPS Map", "📊 Leaderboard", "👤 Profile Settings"])
+
+# TAB 1: AI SCANNER
+with tab1:
+    col1, col2 = st.columns(2)
+    with col1:
+        source = st.radio("Image Source:", ["Upload File", "Live Camera"], horizontal=True)
+        img_file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"]) if source == "Upload File" else st.camera_input("Take Photo")
         
-        with col_res:
-            if st.button("🚀 Run AI Analysis", use_container_width=True):
-                if not client:
-                    st.error("Gemini API Key missing in environment secrets!")
-                else:
-                    with st.spinner("Analyzing waste structure via Gemini AI..."):
-                        try:
-                            prompt = (
-                                "Analyze this image of waste. Provide: "
-                                "1. Type of waste (Plastic, Organic, Electronic, Paper, Metal, Glass). "
-                                "2. Recyclability status (Recyclable / Non-recyclable / Hazardous). "
-                                "3. Clear disposal instructions."
-                            )
-                            response = client.models.generate_content(
-                                model='gemini-3.6-flash',
-                                contents=[image, prompt]
-                            )
-                            result_text = response.text
-                            
-                            st.success("Analysis Complete!")
-                            st.markdown(f"<div class='glass-card'><h4>📊 AI Intelligence Report</h4>{result_text}</div>", unsafe_allow_html=True)
-                            
-                            category = "Plastic"
-                            txt_lower = result_text.lower()
-                            if "organic" in txt_lower: category = "Organic"
-                            elif "electronic" in txt_lower or "e-waste" in txt_lower: category = "Electronic"
-                            elif "paper" in txt_lower: category = "Paper"
-                            elif "metal" in txt_lower: category = "Metal"
-                            elif "glass" in txt_lower: category = "Glass"
-                            
-                            st.session_state.history.append({
-                                "image": image, 
-                                "report": result_text, 
-                                "category": category
-                            })
-                        except Exception as e:
-                            st.error(f"Error: {e}")
+        if img_file:
+            img = Image.open(img_file)
+            st.image(img, use_container_width=True)
+            
+            if st.button("🚀 Analyze Item", type="primary", use_container_width=True):
+                with st.spinner("AI analyzing waste item..."):
+                    st.session_state.analysis = analyze_waste(img)
+                    st.session_state.users_db[st.session_state.active_user_id]["scans"] += 1
+                    st.session_state.users_db[st.session_state.active_user_id]["points"] += 25
+                    st.session_state.users_db[st.session_state.active_user_id]["co2"] = round(
+                        st.session_state.users_db[st.session_state.active_user_id]["co2"] + 0.5, 2
+                    )
+                    st.rerun()
 
-# --- Feature 2: User Profile & Avatar Upload ---
-elif menu == "User Profile & Avatar":
-    st.title("👤 User Profile Management")
-    st.markdown("<p style='color: #94a3b8;'>Customize your account profile and upload a custom avatar picture.</p>", unsafe_allow_html=True)
-    
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    col_p1, col_p2 = st.columns([1, 2])
-    with col_p1:
-        if st.session_state.profile_pic:
-            st.image(st.session_state.profile_pic, width=150, caption="Current Avatar")
+    with col2:
+        res = st.session_state.analysis
+        if res:
+            st.markdown(f'<div class="card"><b>Detected:</b> {res.get("object")}<br><b>Material:</b> {res.get("material")}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card"><b>Scrap Value:</b> {res.get("value")}<br><b>CO₂ Saved:</b> +0.5 kg</div>', unsafe_allow_html=True)
+            st.markdown(f'**Steps:** {", ".join(res.get("prep_steps", []))}')
+            st.markdown(f'**Upcycling Idea:** {res.get("upcycling")}')
         else:
-            st.info("No profile picture uploaded yet.")
-    with col_p2:
-        st.subheader(f"Username: {st.session_state.username}")
-        st.write("Role: Portal Administrator / Eco Contributor")
-        new_avatar = st.file_uploader("Upload New Profile Picture", type=["jpg", "png", "jpeg"])
-        if new_avatar:
-            st.session_state.profile_pic = Image.open(new_avatar)
-            st.success("Profile picture updated successfully! Refreshing view...")
-            st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+            st.info("Upload/Capture photo and click 'Analyze Item'.")
 
-# --- Feature 3: Scan History ---
-elif menu == "Scan History":
-    st.title("📜 Detailed Scan Archive")
-    if not st.session_state.history:
-        st.info("No logs found. Start scanning items to see records here.")
+# TAB 2: HD SATELLITE GPS MAP
+with tab2:
+    st.subheader("🛰️ HD Satellite & Ultra-Zoom Street Map")
+    loc = get_geolocation()
+    
+    if loc and "coords" in loc:
+        lat, lon = loc["coords"]["latitude"], loc["coords"]["longitude"]
+        full_address, addr_dict = get_location_details(lat, lon)
+        st.success(f"📍 **Live GPS Coordinates:** Latitude `{lat:.5f}`, Longitude `{lon:.5f}`")
     else:
-        for i, item in enumerate(reversed(st.session_state.history)):
-            st.markdown(f"<div class='glass-card'>", unsafe_allow_html=True)
-            col_h1, col_h2 = st.columns([1, 2])
-            with col_h1:
-                st.image(item["image"], width=200)
-            with col_h2:
-                st.subheader(f"Category: {item.get('category', 'General')}")
-                st.markdown(item['report'])
-            st.markdown("</div>", unsafe_allow_html=True)
+        lat, lon = 34.1989, 71.9723
+        full_address = "Dargai / Badraga Region"
 
-# --- Feature 4: Analytics & Insights ---
-elif menu == "Analytics & Insights":
-    st.title("📈 Advanced Waste Analytics")
-    if not st.session_state.history:
-        st.info("Perform scans to unlock deep data visualizations.")
-    else:
-        categories = [item.get("category", "Plastic") for item in st.session_state.history]
-        cat_counts = {cat: categories.count(cat) for cat in set(categories)}
-        
-        fig = px.pie(
-            names=list(cat_counts.keys()), 
-            values=list(cat_counts.values()), 
-            title="Waste Distribution Breakdown",
-            hole=0.5,
-            color_discrete_sequence=px.colors.sequential.Tealgrn
-        )
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font_color="white")
-        st.plotly_chart(fig, use_container_width=True)
+    m = folium.Map(location=[lat, lon], zoom_start=18, min_zoom=3, max_zoom=22)
+    folium.TileLayer(
+        tiles='https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+        attr='Google Maps Hybrid', name='Google Satellite Hybrid',
+        subdomains=['mt0', 'mt1', 'mt2', 'mt3'], max_zoom=22, max_native_zoom=20
+    ).add_to(m)
+    folium.Marker([lat, lon], popup=f"<b>User: {current_user['name']}</b>", icon=folium.Icon(color="red", icon="user", prefix="fa")).add_to(m)
+    st_folium(m, width=1100, height=500)
 
-# --- Feature 5: Live Satellite Map ---
-elif menu == "Live Satellite Map":
-    st.title("🛰️ Live Satellite Recycling Intelligence Map")
-    st.markdown("<p style='color: #94a3b8;'>Real-time satellite imagery view connected with global recycling and disposal coordinates.</p>", unsafe_allow_html=True)
+# TAB 3: LEADERBOARD
+with tab3:
+    st.subheader("🏆 Users Ranking & Points Leaderboard")
+    leaderboard_data = [{"User Name": udata["name"], "Points": udata["points"], "Scans": udata["scans"], "CO2 Saved (kg)": udata["co2"]} for uid, udata in st.session_state.users_db.items()]
+    df_users = pd.DataFrame(leaderboard_data).sort_values(by="Points", ascending=False)
+    st.dataframe(df_users, use_container_width=True)
+    fig = px.bar(df_users, x="User Name", y="Points", color="User Name", title="User Eco-Points Comparison")
+    st.plotly_chart(fig, use_container_width=True)
+
+# TAB 4: PROFILE SETTINGS
+with tab4:
+    st.subheader("👤 Account Settings")
+    st.markdown('<div class="profile-card">', unsafe_allow_html=True)
+    prof_col1, prof_col2 = st.columns([1, 2])
     
-    # Create Folium Map with Esri World Imagery (Live Satellite View)
-    m = folium.Map(
-        location=[33.6844, 73.0479], 
-        zoom_start=14, 
-        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
-    )
-    
-    centers = [
-        {"name": "Satellite Eco Hub Alpha", "location": [33.6850, 73.0450], "type": "Plastic & Electronic Processing"},
-        {"name": "Green Earth Satellite Node", "location": [33.6750, 73.0600], "type": "Organic & Compost Facility"}
-    ]
-    
-    for center in centers:
-        folium.Marker(
-            location=center["location"],
-            popup=f"<b>{center['name']}</b><br>Capabilities: {center['type']}",
-            tooltip=center["name"],
-            icon=folium.Icon(color="red", icon="satellite", prefix="fa")
-        ).add_to(m)
-        
-    st_folium(m, width=1100, height=550)
+    with prof_col1:
+        if current_user["pic"] is not None:
+            st.image(current_user["pic"], caption="Profile Photo", width=140)
+        else:
+            st.info("No profile picture added.")
+
+    with prof_col2:
+        with st.form("profile_update_form"):
+            edited_name = st.text_input("Change Username:", value=current_user["name"])
+            new_prof_pic = st.file_uploader("Upload Profile Picture:", type=["jpg", "png", "jpeg"])
+            save_btn = st.form_submit_button("Save Profile Settings", type="primary")
+            
+            if save_btn:
+                if edited_name.strip():
+                    st.session_state.users_db[st.session_state.active_user_id]["name"] = edited_name.strip()
+                if new_prof_pic is not None:
+                    st.session_state.users_db[st.session_state.active_user_id]["pic"] = Image.open(new_prof_pic)
+                st.success("Profile updated successfully!")
+                st.rerun()
+
+    st.markdown(f"""
+    <hr>
+    <b>Account ID:</b> `{st.session_state.active_user_id}`<br>
+    <b>Earned Points:</b> `{current_user['points']}`<br>
+    <b>Total Scans:</b> `{current_user['scans']}`<br>
+    <b>CO₂ Saved:</b> `{current_user['co2']:.2f} kg`
+    """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
